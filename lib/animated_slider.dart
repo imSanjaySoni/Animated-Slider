@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class AnimatedSlider extends StatefulWidget {
   AnimatedSlider({
@@ -42,33 +43,38 @@ class AnimatedSlider extends StatefulWidget {
   State<AnimatedSlider> createState() => _AnimatedSliderState();
 }
 
-const _animationDuration = Duration(milliseconds: 100);
-const _barHorizontalMargins = 6.0;
+const Duration _animationDuration = Duration(milliseconds: 100);
+const double _barHorizontalMargins = 6.0;
+const double _labelsHorizontalMargins = 12.0;
 
 class _AnimatedSliderState extends State<AnimatedSlider> {
   late final _dragBarWidth = widget.barWidth + (_barHorizontalMargins * 2);
   late final _dragRegion = Size(_dragBarWidth + 20, widget.height);
 
   late final _progressNotifier = ValueNotifier<double>(widget.value);
-  late final _overlappingNotifier = ValueNotifier<bool>(false);
+  late final _overflowingNotifier = ValueNotifier<bool>(false);
 
   TextStyle get _labelStyle {
     return widget.labelStyle.copyWith(
-      color: widget.labelStyle.color?.withOpacity(_overlappingNotifier.value ? 1 : 0.7),
+      color: widget.labelStyle.color?.withOpacity(_overflowingNotifier.value ? 1 : 0.7),
     );
   }
 
-  void _onTextSizeChange(Size size, double leftBoxWidth, double rightBoxWidth) {
-    if (leftBoxWidth < (size.width + 16) || rightBoxWidth < (size.width + 16)) {
-      _overlappingNotifier.value = true;
+  void _onTextSizeChange(double textWidth, double leftBoxWidth, double rightBoxWidth) {
+    double labelWidth = textWidth + _labelsHorizontalMargins;
+
+    if (leftBoxWidth < labelWidth || rightBoxWidth < labelWidth) {
+      _overflowingNotifier.value = true;
     } else {
-      _overlappingNotifier.value = false;
+      _overflowingNotifier.value = false;
     }
   }
 
   void _onHorizontalDragUpdate(DragUpdateDetails dragDetails, double sliderWidth) {
     double position = (dragDetails.globalPosition.dx - _dragBarWidth) / sliderWidth;
     _progressNotifier.value = position.clamp(0.0, 1.0);
+    widget.onChange?.call(_progressNotifier.value);
+    HapticFeedback.selectionClick();
   }
 
   @override
@@ -105,7 +111,7 @@ class _AnimatedSliderState extends State<AnimatedSlider> {
                       ),
 
                       /// Bar
-                      _SliderBar(
+                      _DraggableBar(
                         color: widget.barColor,
                         width: widget.barWidth,
                         cornerRadius: widget._cornerRadius,
@@ -126,23 +132,20 @@ class _AnimatedSliderState extends State<AnimatedSlider> {
 
                   /// Progress Labels
                   ValueListenableBuilder(
-                    valueListenable: _overlappingNotifier,
+                    valueListenable: _overflowingNotifier,
                     builder: (context, isOverflowing, child) {
                       return AnimatedPositioned.fromRect(
                         duration: _animationDuration,
                         rect: Rect.fromCenter(
                           width: sliderWidth,
                           height: sliderHeight,
-                          center: Offset(
-                            sliderWidth / 2,
-                            sliderHeight / (isOverflowing ? -2 : 2),
-                          ),
+                          center: Offset(sliderWidth / 2, sliderHeight / (isOverflowing ? -2 : 2)),
                         ),
                         child: child!,
                       );
                     },
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                      padding: const EdgeInsets.symmetric(horizontal: _labelsHorizontalMargins),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -150,7 +153,8 @@ class _AnimatedSliderState extends State<AnimatedSlider> {
                           ComputedText(
                             '$progressInPercentage%',
                             style: _labelStyle,
-                            onSizeChange: (size) => _onTextSizeChange(size, leftBoxWidth, rightBoxWidth),
+                            onSizeChange: (double textWidth) =>
+                                _onTextSizeChange(textWidth, leftBoxWidth, rightBoxWidth),
                           ),
 
                           /// Right Progress Text
@@ -186,8 +190,8 @@ class _AnimatedSliderState extends State<AnimatedSlider> {
   }
 }
 
-class _SliderBar extends StatelessWidget {
-  const _SliderBar({
+class _DraggableBar extends StatelessWidget {
+  const _DraggableBar({
     required this.width,
     required this.color,
     required this.cornerRadius,
@@ -217,33 +221,33 @@ class ComputedText extends StatefulWidget {
     this.text, {
     super.key,
     required this.style,
-    required this.onSizeChange,
+    this.onSizeChange,
   });
 
   final String text;
   final TextStyle style;
-  final void Function(Size) onSizeChange;
+  final void Function(double textWidth)? onSizeChange;
 
   @override
   State<ComputedText> createState() => _ComputedTextState();
 }
 
 class _ComputedTextState extends State<ComputedText> {
-  Size calculateSize() {
-    return (TextPainter(
-            text: TextSpan(text: widget.text, style: widget.style),
-            maxLines: 1,
-            textScaler: TextScaler.noScaling,
-            textDirection: TextDirection.ltr)
-          ..layout())
-        .size;
+  Size _calculateSize() {
+    final textLayout = TextPainter(
+      text: TextSpan(text: widget.text, style: widget.style),
+      maxLines: 1,
+      textScaler: TextScaler.noScaling,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return textLayout.size;
   }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.onSizeChange(calculateSize());
+      widget.onSizeChange?.call(_calculateSize().width);
     });
   }
 
@@ -251,7 +255,7 @@ class _ComputedTextState extends State<ComputedText> {
   void didUpdateWidget(covariant ComputedText oldWidget) {
     if (oldWidget.text != widget.text) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        widget.onSizeChange(calculateSize());
+        widget.onSizeChange?.call(_calculateSize().width);
       });
     }
     super.didUpdateWidget(oldWidget);
